@@ -8,4 +8,8 @@ gem "puma", "~> 6.4"
 gem "sequel", "~> 5.80"
 gem "sqlite3", "~> 2.0"
 gem "rake", "~> 13.2"
-gem "anthropic", "~> 1.0"
+
+# Only needed for `rake import:descriptions`. Install with: BUNDLE_WITH=import bundle install
+group :import do
+  gem "anthropic", "~> 1.0"
+end

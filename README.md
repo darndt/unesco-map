@@ -11,9 +11,10 @@ Interactive map of all UNESCO World Heritage Sites (cultural, natural, mixed).
 ## Setup
 
 ```sh
-bundle install
+bundle install                        # Ruby 4.0.9 (see .ruby-version); skips the :import group if configured
 bundle exec rake import:data          # UNESCO + Wikidata + Wikipedia (~10 min, Wikipedia is rate-limited)
 echo 'ANTHROPIC_API_KEY=sk-ant-...' > .env   # or export it in your shell
+BUNDLE_WITH=import bundle install     # the Anthropic SDK is only needed for descriptions
 bundle exec rake import:descriptions  # ~1,270 Claude calls, resumable
 bundle exec rake stats
 bundle exec rackup -p 9393            # http://localhost:9393
