@@ -13,6 +13,10 @@
     hoverId: null,
   };
 
+  const tooltip = new maplibregl.Popup({
+    className: "site-tooltip", closeButton: false, closeOnClick: false, offset: 10, maxWidth: "260px",
+  });
+
   const map = new maplibregl.Map({
     container: "map",
     style: STYLE,
@@ -101,17 +105,21 @@
 
   // ---------------------------------------------------------------- interaction
   map.on("mousemove", "sites", (e) => {
-    const id = e.features[0]?.id;
+    const f = e.features[0];
+    const id = f?.id;
     if (id === state.hoverId) return;
     setHover(id);
     map.getCanvas().style.cursor = "pointer";
+    if (f) tooltip.setLngLat(f.geometry.coordinates.slice()).setText(f.properties.name).addTo(map);
   });
   map.on("mouseleave", "sites", () => {
     setHover(null);
+    tooltip.remove();
     map.getCanvas().style.cursor = "";
   });
   map.on("click", "sites", (e) => {
     const f = e.features[0];
+    tooltip.remove();
     openPopup(f.id, f.geometry.coordinates.slice());
   });
 
