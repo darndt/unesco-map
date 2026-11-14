@@ -11,6 +11,7 @@
     features: [],
     popup: null,
     hoverId: null,
+    previewId: null,
   };
 
   const tooltip = new maplibregl.Popup({
@@ -21,12 +22,31 @@
     container: "map",
     style: STYLE,
     center: [15, 30],
-    zoom: window.innerWidth < 600 ? 1 : 2,
+    zoom: window.innerWidth <= 720 ? 1 : 2,
     attributionControl: { compact: true },
     hash: "map",
   });
   map.addControl(new maplibregl.NavigationControl({ visualizePitch: false }), "bottom-right");
   map.addControl(new maplibregl.GeolocateControl({ trackUserLocation: false }), "bottom-right");
+
+  // Bottom row: scale bar beside the collapsed attribution "i" (the bottom-left can be covered by the sidebar).
+  const scale = new maplibregl.ScaleControl({ maxWidth: 120, unit: "metric" });
+  map.addControl(scale, "bottom-right");
+  const corner = map.getContainer().querySelector(".maplibregl-ctrl-bottom-right");
+  corner.append(corner.querySelector(".maplibregl-ctrl-scale"));   // after the attribution → floats to its left
+
+  // MapLibre opens compact attribution (and reopens it while the style loads) until the first drag;
+  // keep it collapsed until the map is ready, after which only the "i" button toggles it.
+  const attrib = map.getContainer().querySelector(".maplibregl-ctrl-attrib");
+  // only touch the class when needed: classList.remove always rewrites the attribute,
+  // which would retrigger the observer forever
+  const collapse = () => {
+    if (attrib.classList.contains("maplibregl-compact-show")) attrib.classList.remove("maplibregl-compact-show");
+  };
+  const keepCollapsed = new MutationObserver(collapse);
+  collapse();
+  keepCollapsed.observe(attrib, { attributes: true, attributeFilter: ["class"] });
+  map.once("idle", () => { collapse(); keepCollapsed.disconnect(); });
   map.touchZoomRotate.disableRotation();
 
   // ---------------------------------------------------------------- data + layers
@@ -44,6 +64,8 @@
     const hover = ["case", ["boolean", ["feature-state", "hover"], false], 1.35, 1];
     const radius = (extra = 0) => ["interpolate", ["linear"], ["zoom"],
       ...STOPS.flatMap(([z, r]) => [z, ["+", ["*", r, hover], extra * (z < 6 ? 0.6 : 1)]])];
+    const categoryColor = ["match", ["get", "category"],
+      "Cultural", COLORS.Cultural, "Natural", COLORS.Natural, "Mixed", COLORS.Mixed, "#888"];
 
     // red halo for sites in danger (drawn under the dot)
     map.addLayer({
@@ -66,8 +88,7 @@
       layout: { "circle-sort-key": ["get", "danger"] },
       paint: {
         "circle-radius": radius(),
-        "circle-color": ["match", ["get", "category"],
-          "Cultural", COLORS.Cultural, "Natural", COLORS.Natural, "Mixed", COLORS.Mixed, "#888"],
+        "circle-color": categoryColor,
         "circle-stroke-color": "#ffffff",
         "circle-stroke-width": ["interpolate", ["linear"], ["zoom"], 1, 0.8, 8, 1.6],
         "circle-opacity": 0.95,
@@ -84,6 +105,21 @@
         "circle-color": "rgba(0,0,0,0)",
         "circle-stroke-color": "#1f2328",
         "circle-stroke-width": 2.5,
+      },
+    });
+
+    // halo around the site hovered in the search results (unfiltered, so hidden categories still show)
+    map.addLayer({
+      id: "sites-preview",
+      type: "circle",
+      source: "sites",
+      filter: ["==", ["id"], -1],
+      paint: {
+        "circle-radius": radius(9),
+        "circle-color": categoryColor,
+        "circle-opacity": 0.22,
+        "circle-stroke-color": categoryColor,
+        "circle-stroke-width": 2,
       },
     });
 
@@ -122,11 +158,28 @@
     tooltip.remove();
     openPopup(f.id, f.geometry.coordinates.slice());
   });
+  // A click on empty map (not a drag) closes the details.
+  map.on("click", (e) => {
+    if (!state.popup || !map.getLayer("sites")) return;
+    if (!map.queryRenderedFeatures(e.point, { layers: ["sites"] }).length) state.popup.remove();
+  });
 
   function setHover(id) {
     if (state.hoverId != null) map.setFeatureState({ source: "sites", id: state.hoverId }, { hover: false });
     state.hoverId = id ?? null;
     if (id != null) map.setFeatureState({ source: "sites", id }, { hover: true });
+  }
+
+  // Mark a search result's dot on the map (null clears it, but only if a result set it).
+  function previewSite(f) {
+    const id = f?.id ?? null;
+    if (id === state.previewId) return;
+    if (id == null && state.previewId == null) return;
+    state.previewId = id;
+    setHover(id);
+    if (map.getLayer("sites-preview")) map.setFilter("sites-preview", ["==", ["id"], id ?? -1]);
+    if (f) tooltip.setLngLat(f.geometry.coordinates.slice()).setText(f.properties.name).addTo(map);
+    else tooltip.remove();
   }
 
   // ---------------------------------------------------------------- filters
@@ -184,6 +237,7 @@
     else if (e.key === "Escape") { closeResults(); input.blur(); }
   });
   document.addEventListener("click", (e) => { if (!e.target.closest(".search")) closeResults(); });
+  list.addEventListener("mouseleave", () => previewSite(null));
 
   function runSearch(q) {
     const terms = normalize(q).split(/\s+/).filter(Boolean);
@@ -200,6 +254,7 @@
       .slice(0, 30)
       .map((r) => r.f);
 
+    previewSite(null);
     list.innerHTML = "";
     if (!results.length) {
       const li = el("li", "empty", "No matching sites");
@@ -216,6 +271,7 @@
       const name = el("span", "r-name");
       highlight(name, p.name, terms);
       li.append(dot, name, el("span", "r-meta", `${p.countries} · ${p.category}${p.year ? " · " + p.year : ""}`));
+      li.addEventListener("mouseenter", () => previewSite(f));
       li.addEventListener("mousedown", (e) => { e.preventDefault(); choose(f); });
       list.append(li);
     });
@@ -229,9 +285,11 @@
     [...list.children].forEach((li, j) => li.setAttribute("aria-selected", j === i ? "true" : "false"));
     list.children[i]?.scrollIntoView({ block: "nearest" });
     input.setAttribute("aria-activedescendant", `r-${i}`);
+    previewSite(results[i]);
   }
 
   function closeResults() {
+    previewSite(null);
     list.hidden = true;
     input.setAttribute("aria-expanded", "false");
   }
@@ -255,9 +313,10 @@
   function flyToSite(f, { instant = false } = {}) {
     const coords = f.geometry.coordinates;
     const zoom = Math.max(map.getZoom(), 8);
-    // wide: leave room for the popup above the dot; narrow: keep the dot above the bottom sheet
-    const offset = narrow() ? [0, 0] : [0, Math.min(200, window.innerHeight * 0.3)];
     if (state.popup) state.popup.remove();
+    // wide: centre in the map area right of the (soon full-height) sidebar;
+    // phones keep the dot above the bottom sheet (adjusted once the sheet is open)
+    const offset = narrow() ? [0, 0] : [document.getElementById("panel").offsetWidth / 2, 0];
     if (instant) {
       map.jumpTo({ center: coords, zoom, offset });
       openPopup(f.id, coords);
@@ -267,28 +326,21 @@
     }
   }
 
-  // Pan just enough that the whole popup is on screen (and clear of the panel on wide screens).
-  function ensurePopupVisible(popup) {
-    const node = popup.getElement();
-    if (!node || state.popup !== popup) return;
-    if (narrow()) return centerAboveSheet(node);
-    const r = node.getBoundingClientRect();
-    const pad = 12;
-    const panel = document.getElementById("panel").getBoundingClientRect();
-    const wide = window.innerWidth > 900;
-    const minLeft = wide ? panel.right + pad : pad;
-    const minTop = wide ? pad : panel.bottom + pad;   // panel spans the top on narrow screens
-    let dx = 0, dy = 0;
-    if (r.top < minTop) dy = r.top - minTop;
-    else if (r.bottom > window.innerHeight - pad) dy = r.bottom - window.innerHeight + pad;
-    if (r.left < minLeft) dx = r.left - minLeft;
-    else if (r.right > window.innerWidth - pad) dx = r.right - window.innerWidth + pad;
-    if (dx || dy) map.panBy([dx, dy], { duration: 350 });
+  // Wide: only pan if the selected dot is off-screen or behind the sidebar. Phones: keep it clear of the sheet.
+  function ensureSiteVisible(details) {
+    if (state.popup !== details || !state.coords) return;
+    if (narrow()) return centerAboveSheet(details.getElement());
+    const p = map.project(state.coords);
+    const left = document.getElementById("panel").getBoundingClientRect().right;
+    const { width, height } = map.getContainer().getBoundingClientRect();
+    const pad = 40;
+    if (p.x < left + pad || p.y < pad || p.x > width - pad || p.y > height - pad) {
+      map.easeTo({ center: state.coords, offset: [left / 2, 0], duration: 400 });
+    }
   }
 
   // Phones: move the selected dot into the free gap between the panel and the sheet.
   function centerAboveSheet(sheet) {
-    if (!state.coords) return;
     const top = document.getElementById("panel").getBoundingClientRect().bottom;
     const bottom = sheet.getBoundingClientRect().top;
     const p = map.project(state.coords);
@@ -297,34 +349,40 @@
     if (Math.abs(dy) > 8 || Math.abs(dx) > 40) map.panBy([dx, dy], { duration: 350 });
   }
 
-  // ---------------------------------------------------------------- popup / sheet
-  const narrow = () => window.matchMedia("(max-width: 600px)").matches;
+  // ---------------------------------------------------------------- site details
+  const NARROW = window.matchMedia("(max-width: 720px)");
+  const narrow = () => NARROW.matches;
 
-  // Bottom sheet for phones, with the same small interface as a MapLibre popup.
-  function createSheet(card) {
-    const sheet = document.getElementById("sheet");
-    const body = sheet.querySelector(".sheet__body");
+  // Site details live in the sidebar on wide screens and in a bottom sheet on phones.
+  function openDetails(card) {
+    const box = document.getElementById(narrow() ? "sheet" : "info");
+    const body = box.querySelector("[data-body]");
     const handlers = [];
     body.innerHTML = "";
-    body.scrollTop = 0;
+    box.scrollTop = body.scrollTop = 0;
     body.append(card);
-    sheet.hidden = false;
-    requestAnimationFrame(() => sheet.classList.add("open"));
+    box.hidden = false;
+    requestAnimationFrame(() => box.classList.add("open"));
     const api = {
-      getElement: () => sheet,
+      getElement: () => box,
       on: (ev, fn) => { if (ev === "close") handlers.push(fn); return api; },
       remove: () => {
-        if (sheet._owner !== api) return;
-        sheet._owner = null;
-        sheet.classList.remove("open");
-        sheet.hidden = true;
+        if (box._owner !== api) return;
+        box._owner = null;
+        box.classList.remove("open");
+        box.hidden = true;
         handlers.forEach((fn) => fn());
       },
     };
-    sheet._owner = api;
-    sheet.querySelector(".sheet__close").onclick = () => api.remove();
+    box._owner = api;
+    box.querySelector("[data-close]").onclick = () => api.remove();
     return api;
   }
+
+  // Crossing the phone/desktop breakpoint: move open details to the other container.
+  NARROW.addEventListener("change", () => {
+    if (state.popup && state.selectedId != null) openPopup(state.selectedId, state.coords);
+  });
 
   function selectOnMap(id) {
     if (map.getLayer("sites-selected")) map.setFilter("sites-selected", ["==", ["id"], id ?? -1]);
@@ -333,14 +391,12 @@
   async function openPopup(id, coords) {
     if (state.popup) state.popup.remove();
     const card = el("article", "card");
-    const popup = narrow()
-      ? createSheet(card)
-      : new maplibregl.Popup({ className: "site-popup", maxWidth: "340px", offset: 14, focusAfterOpen: false })
-          .setLngLat(coords).setDOMContent(card).addTo(map);
+    const popup = openDetails(card);
     state.popup = popup;
     state.coords = coords;
+    state.selectedId = id;
     selectOnMap(id);
-    popup.on("close", () => { if (state.popup === popup) { state.popup = null; selectOnMap(null); } });
+    popup.on("close", () => { if (state.popup === popup) { state.popup = null; state.selectedId = null; selectOnMap(null); } });
 
     const url = new URL(location.href);
     url.searchParams.set("site", id);
@@ -359,11 +415,11 @@
       if (!res.ok) throw new Error(res.statusText);
       const site = await res.json();
       if (state.popup === popup) {
-        renderCard(card, site, () => ensurePopupVisible(popup));
-        ensurePopupVisible(popup);
+        renderCard(card, { ...site, coords }, () => ensureSiteVisible(popup));
+        ensureSiteVisible(popup);
       }
     } catch {
-      if (state.popup === popup) renderCard(card, { ...base, description: "Details could not be loaded." });
+      if (state.popup === popup) renderCard(card, { ...base, coords, description: "Details could not be loaded." });
     }
   }
 
@@ -408,6 +464,7 @@
       const links = el("div", "card__links");
       if (s.unesco_url) links.append(link(s.unesco_url, "UNESCO", "", ICON_UNESCO));
       if (s.wikipedia_url) links.append(link(s.wikipedia_url, "Wikipedia", "", ICON_WIKI));
+      if (s.coords) links.append(link(googleMapsUrl(s.coords), "Google Maps", "", ICON_PIN));
       body.append(links);
     }
     card.append(body);
@@ -422,8 +479,16 @@
     setTimeout(() => { t.classList.remove("show"); setTimeout(() => t.remove(), 300); }, 4500);
   }
 
+  const ICON_EXTERNAL = '<svg class="link__ext" viewBox="0 0 24 24" aria-hidden="true"><path d="M14 3h7v7h-2V6.4l-9.3 9.3-1.4-1.4L17.6 5H14V3ZM5 5h6v2H5v12h12v-6h2v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2Z"/></svg>';
   const ICON_UNESCO = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2 2 7v2h20V7L12 2Zm-7 9v7h2v-7H5Zm4 0v7h2v-7H9Zm4 0v7h2v-7h-2Zm4 0v7h2v-7h-2ZM2 20v2h20v-2H2Z"/></svg>';
   const ICON_WIKI = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M1 5h6v1.2l-1.6.3 3.9 9.2 2.1-4.8-2-4.4-1.4-.3V5h5.6v1.2l-1.4.3 1.2 2.9 1.4-2.9-1.5-.3V5h4.6v1.2l-1.6.4-2.4 5 2.6 5.6 3.8-9.1-1.7-.6V5H23v1.2l-1.3.4-5.6 12.9h-1l-3-6.6-3 6.6h-1L2.4 6.6 1 6.2V5Z"/></svg>';
+
+  const ICON_PIN = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2a7 7 0 0 1 7 7c0 5.2-7 13-7 13S5 14.2 5 9a7 7 0 0 1 7-7Zm0 4.5a2.5 2.5 0 1 0 0 5 2.5 2.5 0 0 0 0-5Z"/></svg>';
+
+  // coords are [lng, lat] (GeoJSON order); Google wants "lat,lng"
+  function googleMapsUrl([lng, lat]) {
+    return `https://www.google.com/maps/search/?api=1&query=${lat.toFixed(5)},${lng.toFixed(5)}`;
+  }
 
   function link(href, text, cls, icon) {
     const a = el("a", cls || null);
@@ -431,7 +496,9 @@
     a.target = "_blank";
     a.rel = "noopener";
     a.innerHTML = icon;
-    a.append(document.createTextNode(text));
+    a.append(el("span", "link__text", text));
+    a.insertAdjacentHTML("beforeend", ICON_EXTERNAL);
+    a.title = `Opens ${new URL(href).hostname} in a new tab`;
     return a;
   }
 
