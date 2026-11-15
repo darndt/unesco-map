@@ -51,7 +51,7 @@
 
   // ---------------------------------------------------------------- data + layers
   map.on("load", async () => {
-    const res = await fetch("/api/sites.geojson");
+    const res = await fetch("api/sites.geojson");
     const data = await res.json();
     state.features = data.features.map((f) => ({ ...f, _search: normalize(`${f.properties.name} ${f.properties.countries}`) }));
     renderCounts();
@@ -411,7 +411,7 @@
     renderCard(card, base ? { ...base, loading: true } : { loading: true });
 
     try {
-      const res = await fetch(`/api/sites/${id}`);
+      const res = await fetch(`api/sites/${id}.json`);
       if (!res.ok) throw new Error(res.statusText);
       const site = await res.json();
       if (state.popup === popup) {

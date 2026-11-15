@@ -4,3 +4,5 @@ data/*.sqlite3*
 data/raw/
 .env
 .DS_Store
+dist/
+logs/

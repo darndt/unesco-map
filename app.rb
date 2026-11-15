@@ -33,7 +33,8 @@ class App < Sinatra::Base
     JSON.generate(type: "FeatureCollection", features: features)
   end
 
-  # Full detail for one popup.
+  # Full detail for one popup. The frontend asks for "668.json" so the same
+  # relative URL works against the static export on GitHub Pages.
   get "/api/sites/:id" do
     s = SITES.where(id_no: params[:id].to_i).first or halt 404, { error: "not found" }.to_json
     content_type :json

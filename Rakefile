@@ -45,3 +45,49 @@ task :stats do
   puts "Image:        #{s.exclude(image_url: nil).count}"
   puts "Description:  #{s.exclude(description: nil).count}"
 end
+
+DIST = File.join(__dir__, "dist")
+
+desc "Export the site as static files into dist/ (for GitHub Pages)"
+task :export do
+  require "rack/mock"
+  require "fileutils"
+  require_relative "app"
+
+  # Render every API response through the real app so the export can't drift from it.
+  request = Rack::MockRequest.new(App)
+  get = lambda do |path|
+    res = request.get(path, "HTTP_HOST" => "localhost")
+    abort "export: GET #{path} returned #{res.status}" unless res.status == 200
+    res.body
+  end
+
+  # Keep dist/.git (if any) out of the way: deploy re-creates it anyway.
+  FileUtils.rm_rf(DIST)
+  FileUtils.mkdir_p(File.join(DIST, "api", "sites"))
+  FileUtils.cp_r(Dir[File.join(__dir__, "public", "*")], DIST)
+  FileUtils.touch(File.join(DIST, ".nojekyll"))
+
+  File.write(File.join(DIST, "api", "sites.geojson"), get.call("/api/sites.geojson"))
+  ids = DB.connection[:sites].order(:id_no).select_map(:id_no)
+  abort "export: the database has no sites - run `rake import:all` first" if ids.empty?
+  ids.each { |id| File.write(File.join(DIST, "api", "sites", "#{id}.json"), get.call("/api/sites/#{id}.json")) }
+  puts "Exported #{ids.size} sites to dist/"
+end
+
+desc "Export and force-push dist/ to the gh-pages branch (REMOTE=origin)"
+task deploy: :export do
+  remote = ENV.fetch("REMOTE", "origin")
+  url = `git remote get-url #{remote} 2>/dev/null`.strip
+  abort "deploy: no git remote named '#{remote}' - add one with `git remote add #{remote} <url>`" if url.empty?
+  rev = `git rev-parse --short HEAD`.strip
+
+  # gh-pages holds only generated files, so each deploy replaces it with a single fresh commit.
+  Dir.chdir(DIST) do
+    sh "git init -q -b gh-pages"
+    sh "git add -A"
+    sh "git", "commit", "-q", "-m", "Deploy #{rev}"
+    sh "git", "push", "--force", url, "gh-pages"
+  end
+  FileUtils.rm_rf(File.join(DIST, ".git"))
+end

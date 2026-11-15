@@ -3,7 +3,7 @@
 Interactive map of all UNESCO World Heritage Sites (cultural, natural, mixed).
 
 - **Map:** MapLibre GL + [OpenFreeMap](https://openfreemap.org) "Liberty" vector tiles
-- **Server:** Ruby (Sinatra + Puma), data in SQLite via Sequel
+- **Hosting:** static export on GitHub Pages; Ruby (Sinatra + Puma) for local development, data in SQLite via Sequel
 - **Data:** official UNESCO list ([data.unesco.org](https://data.unesco.org/explore/dataset/whc001/)),
   linked to Wikidata (property P757) for Wikipedia articles and Commons images
 - **Descriptions:** written fresh for each site by Claude from UNESCO and Wikipedia facts
@@ -19,6 +19,20 @@ bundle exec rake import:descriptions  # ~1,270 Claude calls, resumable
 bundle exec rake stats
 bundle exec rackup -p 9393            # http://localhost:9393
 ```
+
+### Publishing to GitHub Pages
+
+The live site is fully static: `rake export` renders every API response to JSON files in `dist/`,
+and `rake deploy` force-pushes that folder to the `gh-pages` branch.
+
+```sh
+bundle exec rake export    # writes dist/ (preview: ruby -run -e httpd dist -p 8000)
+bundle exec rake deploy    # export + push to origin's gh-pages branch
+```
+
+In the GitHub repo, set Settings → Pages to deploy from the `gh-pages` branch, folder `/ (root)`.
+The Sinatra server is only for local development. All frontend URLs are relative so the site
+works under `/<repo>/`.
 
 Until descriptions are generated, popups show the first two sentences of the Wikipedia intro.
 
@@ -39,4 +53,4 @@ Raw downloads are cached in `data/raw/`; run any import with `REFRESH=1` to re-d
 - Type filters and an "in danger only" toggle
 - Search by site name or country (accent-insensitive, keyboard navigable)
 - Popup: image, generated description, links to UNESCO, Wikipedia and Wikidata
-- Shareable links: `/?site=668` opens Angkor
+- Shareable links: `?site=668` opens Angkor
