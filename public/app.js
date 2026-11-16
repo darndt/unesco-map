@@ -49,8 +49,68 @@
   map.once("idle", () => { collapse(); keepCollapsed.disconnect(); });
   map.touchZoomRotate.disableRotation();
 
+  // ---------------------------------------------------------------- satellite basemap
+  // Esri World Imagery (sub-meter in most places). It slots in under the boundaries and labels
+  // of the vector style, so "Satellite" reads as a hybrid map; it stays hidden until switched on.
+  const SATELLITE = "satellite";
+  const CLUTTER = /^(building-3d|poi_|highway-|road_shield|airport)/;
+  const addSatellite = () => {
+    map.addSource(SATELLITE, {
+      type: "raster",
+      tiles: ["https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}"],
+      tileSize: 256,
+      maxzoom: 19,
+      attribution: 'Imagery &copy; <a href="https://www.esri.com/" target="_blank" rel="noopener">Esri</a>, Maxar, Earthstar Geographics',
+    });
+    const layers = map.getStyle().layers;
+    const before = layers.find((l) => l.id.startsWith("boundary")) || layers.find((l) => l.type === "symbol");
+    map.addLayer({
+      id: SATELLITE, type: "raster", source: SATELLITE,
+      layout: { visibility: "none" },
+      paint: { "raster-fade-duration": 150 },
+    }, before && before.id);
+  };
+
+  class BasemapControl {
+    onAdd() {
+      this.el = document.createElement("div");
+      this.el.className = "maplibregl-ctrl basemap-switch";
+      this.el.setAttribute("role", "radiogroup");
+      this.el.setAttribute("aria-label", "Base map");
+      this.el.innerHTML = `
+        <button type="button" role="radio" data-mode="map" aria-checked="true">Map</button>
+        <button type="button" role="radio" data-mode="satellite" aria-checked="false">Satellite</button>`;
+      this.el.addEventListener("click", (e) => {
+        const btn = e.target.closest("button");
+        if (btn) this.set(btn.dataset.mode);
+      });
+      return this.el;
+    }
+    set(mode) {
+      if (!map.getLayer(SATELLITE)) return;   // style still loading
+      const on = mode === "satellite";
+      map.setLayoutProperty(SATELLITE, "visibility", on ? "visible" : "none");
+      // 3D buildings would cover the imagery, and POI icons / road names just clutter it;
+      // keep only boundaries and place/water labels on top
+      for (const l of map.getStyle().layers) {
+        if (CLUTTER.test(l.id)) map.setLayoutProperty(l.id, "visibility", on ? "none" : "visible");
+      }
+      map.getContainer().classList.toggle("is-satellite", on);
+      this.el.querySelectorAll("button").forEach((b) => b.setAttribute("aria-checked", String(b.dataset.mode === mode)));
+    }
+    onRemove() { this.el.remove(); }
+  }
+  map.addControl(new BasemapControl(), "top-right");
+
+  // Phones: the search panel spans the top, so drop the switcher just below it.
+  const panelEl = document.getElementById("panel");
+  new ResizeObserver(() => {
+    document.documentElement.style.setProperty("--panel-bottom", `${panelEl.getBoundingClientRect().bottom}px`);
+  }).observe(panelEl);
+
   // ---------------------------------------------------------------- data + layers
   map.on("load", async () => {
+    addSatellite();
     const res = await fetch("api/sites.geojson");
     const data = await res.json();
     state.features = data.features.map((f) => ({ ...f, _search: normalize(`${f.properties.name} ${f.properties.countries}`) }));
@@ -469,6 +529,22 @@
     }
     card.append(body);
   }
+
+  // ---------------------------------------------------------------- keyboard
+  // "f" toggles full screen (the whole page, so the panel stays usable); Esc exits as usual.
+  document.addEventListener("keydown", (e) => {
+    if (e.key !== "f" && e.key !== "F") return;
+    if (e.metaKey || e.ctrlKey || e.altKey || e.repeat) return;
+    if (e.target.closest("input, textarea, select, [contenteditable]")) return;
+    const doc = document, root = doc.documentElement;
+    const current = doc.fullscreenElement || doc.webkitFullscreenElement;
+    const enter = root.requestFullscreen || root.webkitRequestFullscreen;
+    const exit = doc.exitFullscreen || doc.webkitExitFullscreen;
+    if (!enter) return;   // e.g. iPhone Safari
+    e.preventDefault();
+    const p = current ? exit.call(doc) : enter.call(root);
+    if (p && p.catch) p.catch(() => {});
+  });
 
   // ---------------------------------------------------------------- helpers
   function toast(message) {

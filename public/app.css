@@ -106,6 +106,19 @@ body { font-family: var(--sans); color: var(--ink); background: var(--bg-soft); 
   clear: none; margin: 12px 0 0 0; border-radius: 0 0 3px 3px; background: rgba(255,255,255,.8);
 }
 
+
+/* base map switcher (top right) */
+.maplibregl-ctrl-top-right .basemap-switch {
+  display: flex; padding: 3px; gap: 2px; border-radius: 999px; background: var(--bg); box-shadow: 0 1px 4px rgba(0,0,0,.2);
+}
+.basemap-switch button {
+  border: 0; border-radius: 999px; padding: 6px 12px; cursor: pointer; background: transparent;
+  font: 500 12.5px/1 var(--sans); color: var(--ink-soft); transition: background .15s, color .15s;
+}
+.basemap-switch button:hover { color: var(--ink); }
+.basemap-switch button[aria-checked="true"] { background: var(--ink); color: #fff; }
+.basemap-switch button:focus-visible { outline: 2px solid #8aa4c8; outline-offset: 1px; }
+
 .maplibregl-popup.site-tooltip { pointer-events: none; }
 .maplibregl-popup.site-tooltip .maplibregl-popup-content {
   padding: 5px 9px; border-radius: 6px; box-shadow: 0 2px 8px rgba(20, 24, 30, 0.18);
@@ -170,6 +183,7 @@ body { font-family: var(--sans); color: var(--ink); background: var(--bg-soft); 
 @media (max-width: 720px) {
   :root { --sidebar: 0px; }
   .panel { top: 12px; left: 12px; right: 12px; bottom: auto; width: auto; border-radius: var(--radius); box-shadow: var(--shadow); }
+  .maplibregl-ctrl-top-right { top: calc(var(--panel-bottom, 0px) + 2px); }
   .panel__top { padding: 12px; }
   .info { display: none !important; }
   .panel h1 { font-size: 19px; }
